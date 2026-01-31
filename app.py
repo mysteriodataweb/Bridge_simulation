@@ -2,103 +2,105 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 
-# --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="Marine Bridge MMC Simulator", layout="wide")
-st.title("🌉 Marine Bridge Structural Analysis (MMC)")
-st.markdown("""
-This simulator evaluates the mechanical behavior of a bridge pier under combined external hazards.
-It uses **Euler-Bernoulli beam theory** and the **Von Mises yield criterion**.
-""")
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Total Bridge MMC Simulator", layout="wide")
+st.title("🏗️ Full Marine Bridge Mechanical Analysis")
 
-# --- 1. USER INTERFACE (SIDEBAR) ---
-st.sidebar.header("Design Parameters & Hazards")
+# --- 1. PARAMETERS ---
+st.sidebar.header("🌉 Bridge Geometry")
+L_deck = st.sidebar.slider("Deck Length (m)", 50, 500, 200)
+W_deck = st.sidebar.slider("Deck Width (m)", 10, 30, 15)
+H_piers = st.sidebar.slider("Piers Height (m)", 10, 60, 30)
+D_piers = st.sidebar.slider("Piers Diameter (m)", 2.0, 8.0, 4.0)
 
-# Structural Parameters
-st.sidebar.subheader("🏗️ Structure")
-D = st.sidebar.slider("Pier Diameter (m)", 2.0, 10.0, 5.0)
-H = st.sidebar.slider("Pier Height (m)", 20.0, 100.0, 50.0)
-material = st.sidebar.selectbox("Material", ["Concrete", "Steel"])
+st.sidebar.header("🌪️ Environmental Hazards")
+V_wind = st.sidebar.slider("Wind Velocity (m/s)", 0, 100, 40)
+H_wave = st.sidebar.slider("Wave Height (m)", 0.0, 20.0, 5.0)
+A_seismic = st.sidebar.slider("Seismic Accel (g)", 0.0, 1.5, 0.3)
 
-# Environmental Hazards
-st.sidebar.subheader("🌪️ External Hazards")
-V_wind = st.sidebar.slider("Wind Speed (m/s)", 0, 80, 35)
-H_wave = st.sidebar.slider("Wave Height (m)", 0.0, 15.0, 4.0)
-A_seismic = st.sidebar.slider("Seismic Intensity (g)", 0.0, 1.0, 0.15)
+# --- 2. THE PHYSICS ENGINE (MMC) ---
+E = 30e9        # Concrete Young's Modulus
+rho_c = 2500    # Concrete Density
+yield_limit = 25e6 # 25 MPa
 
-# --- 2. PHYSICS ENGINE (MMC LOGIC) ---
-# Material properties
-if material == "Concrete":
-    E = 30e9        # Young's Modulus (Pa)
-    yield_limit = 25e6 # Yield strength (25 MPa)
-    rho_mat = 2500  # Density (kg/m3)
+# Geometry Calculations
+Area_pier = np.pi * (D_piers/2)**2
+I_pier = (np.pi * D_piers**4) / 64
+Vol_deck = L_deck * W_deck * 2 # Assuming 2m thickness
+Vol_piers = Area_pier * H_piers * 2 # 2 Piers system
+
+# Mass & Weight (Volume Forces)
+Mass_total = (Vol_deck + Vol_piers) * rho_c
+Weight_total = Mass_total * 9.81
+
+# Surface Forces
+# Wind on Deck + Piers
+F_wind = 0.5 * 1.2 * (V_wind**2) * (L_deck * 2 + H_piers * D_piers)
+# Water on Piers
+F_water = 0.5 * 1025 * 1.5 * D_piers * (H_wave**2)
+# Seismic Inertia (F = m*a)
+F_seismic = Mass_total * (A_seismic * 9.81)
+
+# Resultant Stress Analysis at Pier Base
+# 1. Normal Stress (Compression from weight)
+sigma_axial = (Weight_total / 2) / Area_pier
+# 2. Bending Stress (From horizontal loads)
+Total_Horizontal_F = (F_wind + F_water + F_seismic) / 2 # Per pier
+Moment_base = Total_Horizontal_F * H_piers
+sigma_bending = (Moment_base * (D_piers/2)) / I_pier
+
+# 3. Von Mises Combination
+# sigma_VM = sqrt( (sigma_axial + sigma_bending)^2 + 3*tau^2 ) 
+# Simplified: Focus on max normal stress sum
+sigma_max = sigma_axial + sigma_bending
+safety_ratio = sigma_max / yield_limit
+
+# --- 3. DASHBOARD DISPLAY ---
+col1, col2, col3 = st.columns(3)
+col1.metric("Total Weight", f"{Weight_total/1e6:.1f} MN")
+col2.metric("Total Wind Force", f"{F_wind/1e3:.1f} kN")
+col3.metric("Seismic Force", f"{F_seismic/1e6:.1f} MN")
+
+# --- 4. VISUALIZATION ---
+st.write("### 🌍 Force & Stress Distribution")
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Draw Water Level
+ax.axhspan(0, H_wave, color='cyan', alpha=0.1, label="Submerged Zone")
+
+# Draw Bridge Structure (Original)
+# Piers
+ax.plot([L_deck/4, L_deck/4], [0, H_piers], 'k--', alpha=0.3)
+ax.plot([3*L_deck/4, 3*L_deck/4], [0, H_piers], 'k--', alpha=0.3)
+# Deck
+ax.plot([0, L_deck], [H_piers, H_piers], 'k--', alpha=0.3)
+
+# Draw Deflected Structure (Scaled for visibility)
+scale = 5.0 / (max(sigma_max/1e6, 1))
+deflection = (Total_Horizontal_F * H_piers**3) / (3 * E * I_pier)
+d_x = deflection * 20 # exaggerated for view
+
+# Deformed Piers
+z = np.linspace(0, H_piers, 50)
+x_p1 = (d_x) * (z/H_piers)**2 + L_deck/4
+x_p2 = (d_x) * (z/H_piers)**2 + 3*L_deck/4
+ax.plot(x_p1, z, color='blue', lw=D_piers, label="Piers (Stressed)")
+ax.plot(x_p2, z, color='blue', lw=D_piers)
+
+# Deformed Deck
+ax.plot([x_p1[-1] - L_deck/4, x_p2[-1] + L_deck/4], [H_piers, H_piers], color='darkred', lw=5, label="Deck")
+
+# Force Arrows
+ax.arrow(L_deck/2, H_piers + 5, V_wind, 0, head_width=2, color='orange', label="Wind")
+ax.arrow(-10, H_wave/2, 10, 0, head_width=2, color='teal', label="Waves")
+
+ax.set_ylim(-5, H_piers + 20)
+ax.legend(loc='upper right')
+ax.set_title("Bridge Response Simulation")
+st.pyplot(fig)
+
+# Final Integrity Check
+if sigma_max > yield_limit:
+    st.error(f"❌ COLLAPSE: Max Stress {sigma_max/1e6:.2f} MPa exceeds Material Strength!")
 else:
-    E = 210e9       # Steel Young's Modulus
-    yield_limit = 250e6 # Yield strength (250 MPa)
-    rho_mat = 7850
-
-I = (np.pi * D**4) / 64  # Moment of Inertia (m4)
-
-# Force Calculations
-# Wind Surface Force (Drag)
-F_wind = 0.5 * 1.225 * 1.2 * D * (V_wind**2) * (H/2) 
-
-# Hydrodynamic Surface Force (Morison simplified)
-F_water = 0.5 * 1025 * 1.5 * D * (H_wave**2) 
-
-# Seismic Volume Force (Inertia: F = m * a)
-mass = rho_mat * np.pi * (D/2)**2 * H
-F_seismic = mass * (A_seismic * 9.81)
-
-# Resultant Force and Moment
-F_total = F_wind + F_water + F_seismic
-M_base = F_total * (H/2) # Bending moment at the fixed base
-
-# --- 3. MECHANICAL RESPONSE ---
-# Elastic Deflection (Hooke's Law application)
-# Max deflection formula for a cantilever beam
-max_deflection = (F_total * H**3) / (3 * E * I)
-
-# Stress Analysis (Von Mises)
-# We calculate bending stress (sigma) and check against the yield limit
-sigma_bending = (M_base * (D/2)) / I
-von_mises = np.sqrt(sigma_bending**2) # Simplified for 1D bending
-safety_ratio = von_mises / yield_limit
-
-# --- 4. DATA VISUALIZATION ---
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    st.subheader("📊 Structural Integrity (Von Mises)")
-    
-    if safety_ratio > 1:
-        st.error(f"🔴 STRUCTURAL FAILURE! Stress: {von_mises/1e6:.2f} MPa exceeds Limit")
-    elif safety_ratio > 0.8:
-        st.warning(f"🟡 CRITICAL: Stress: {von_mises/1e6:.2f} MPa near Yield Limit")
-    else:
-        st.success(f"🟢 SAFE: Stress: {von_mises/1e6:.2f} MPa within Elastic Range")
-    
-    # Visual gauge
-    st.progress(min(safety_ratio, 1.0))
-    st.write(f"Utilization: **{safety_ratio*100:.1f}%**")
-
-with col2:
-    st.subheader("🎨 Elastic Displacement Visualization")
-    fig, ax = plt.subplots(figsize=(5, 8))
-    
-    # Calculating the deflected shape (y = height, x = displacement)
-    z = np.linspace(0, H, 100)
-    # Cantilever deflection curve equation
-    x_disp = (max_deflection) * ( (z**2 * (3*H - z)) / (2 * H**3) )
-    
-    ax.plot(x_disp * 100, z, lw=5, color='royalblue', label="Deflected Pier")
-    ax.axvline(0, color='black', linestyle='--', alpha=0.5, label="Original Axis")
-    ax.set_xlim(-150, 150) # Range in centimeters
-    ax.set_ylim(0, H + 5)
-    ax.set_xlabel("Horizontal Displacement (cm)")
-    ax.set_ylabel("Height (m)")
-    ax.legend()
-    ax.grid(True, linestyle=':')
-    st.pyplot(fig)
-
-st.write("---")
-st.caption("Developed for MMC Analysis. This model assumes a linear elastic material and a fixed-base cantilever pier.")
+    st.success(f"✅ STABLE: Max Stress {sigma_max/1e6:.2f} MPa is within limits.")
