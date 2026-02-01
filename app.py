@@ -38,9 +38,9 @@ F_seismic = Mass_total * (A_seismic * 9.81)
 Total_F_h = (F_wind + F_water + F_seismic) / 2 # Per pier
 
 # Stress & Deflection
-Moment_base = Total_F_h * (H_piers * 0.75) # Estimated lever arm
+Moment_base = (F_wind * H_piers) + (F_water * H_wave/2) + (F_seismic * H_piers/2)
 sigma_axial = (Mass_total * 9.81 / 2) / Area_pier
-sigma_bending = (Moment_base * (D_piers/2)) / I_pier
+sigma_bending = (Moment_base/2 * (D_piers/2)) / I_pier
 sigma_max = np.sqrt(sigma_axial**2 + sigma_bending**2)
 
 # Elastic Deflection (The curve)
@@ -49,16 +49,13 @@ z = np.linspace(0, H_piers, 20)
 deflection_curve = max_d * (z/H_piers)**2
 
 # --- 3. 3D VISUALIZATION (PLOTLY) ---
-st.write("### 🧊 Interactive 3D Structural Response")
+st.write("### 🧊 Interactive 3D Structural Response & Force Vectors")
 fig = go.Figure()
 
-# --- DRAWING PIERS (Cylinders) ---
+# --- DRAWING PIERS ---
 def draw_pier(x_offset, color):
-    # Deformed pier coordinates
     x_coords = x_offset + deflection_curve
     y_coords = np.zeros_like(z)
-    
-    # Create a 3D tube for the pier
     fig.add_trace(go.Scatter3d(
         x=x_coords, y=y_coords, z=z,
         mode='lines',
@@ -69,26 +66,41 @@ def draw_pier(x_offset, color):
 draw_pier(-L_deck/4, 'blue')
 draw_pier(L_deck/4, 'blue')
 
-# --- DRAWING DECK (Box) ---
-# Deck corners at the top of deformed piers
+# --- DRAWING DECK ---
 d_top = deflection_curve[-1]
 fig.add_trace(go.Mesh3d(
     x=[d_top-L_deck/2, d_top+L_deck/2, d_top+L_deck/2, d_top-L_deck/2, d_top-L_deck/2, d_top+L_deck/2, d_top+L_deck/2, d_top-L_deck/2],
     y=[-W_deck/2, -W_deck/2, W_deck/2, W_deck/2, -W_deck/2, -W_deck/2, W_deck/2, W_deck/2],
     z=[H_piers, H_piers, H_piers, H_piers, H_piers+T_deck, H_piers+T_deck, H_piers+T_deck, H_piers+T_deck],
-    i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
-    j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
-    k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
+    i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2], j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3], k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
     color='brown', opacity=0.8, name="Deck"
 ))
 
 # --- DRAWING WATER SURFACE ---
 fig.add_trace(go.Mesh3d(
-    x=[-L_deck, L_deck, L_deck, -L_deck],
-    y=[-L_deck/2, -L_deck/2, L_deck/2, L_deck/2],
+    x=[-L_deck, L_deck, L_deck, -L_deck], y=[-L_deck/2, -L_deck/2, L_deck/2, L_deck/2],
     z=[H_wave, H_wave, H_wave, H_wave],
     color='cyan', opacity=0.2, name="Water Level"
 ))
+
+# --- ADDING FORCE VECTORS (CONES) ---
+# Normalizing vector size for visibility
+scale_f = L_deck / 5
+
+def add_force(x, y, z, val, name, col):
+    if val > 0:
+        fig.add_trace(go.Cone(
+            x=[x], y=[y], z=[z], u=[val], v=[0], w=[0],
+            sizemode="scaled", sizeref=0.5, showscale=False,
+            colorscale=[[0, col], [1, col]], name=name
+        ))
+
+# Wind Force (Applied to Deck)
+add_force(d_top, 0, H_piers + T_deck/2, scale_f, "Wind Force", "orange")
+# Wave Force (Applied to Piers at water level)
+add_force(deflection_curve[int(len(z)/2)], 0, H_wave/2, scale_f*0.7, "Wave Force", "teal")
+# Seismic Force (Applied to middle of structure)
+add_force(d_top/2, 0, H_piers/2, scale_f*0.5, "Seismic Force", "green")
 
 # Scene Configuration
 fig.update_layout(
@@ -96,10 +108,9 @@ fig.update_layout(
         aspectmode='data',
         xaxis=dict(title="Lateral (m)", range=[-L_deck, L_deck]),
         yaxis=dict(title="Width (m)", range=[-L_deck/2, L_deck/2]),
-        zaxis=dict(title="Height (m)", range=[0, H_piers + 10]),
+        zaxis=dict(title="Height (m)", range=[0, H_piers + 15]),
     ),
-    margin=dict(l=0, r=0, b=0, t=0),
-    height=700
+    margin=dict(l=0, r=0, b=0, t=0), height=700
 )
 
 st.plotly_chart(fig, use_container_width=True)
