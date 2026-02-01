@@ -40,12 +40,12 @@ Total_F_h = (F_wind + F_water + F_seismic) / 2 # Per pier
 
 # Archimedes Principle (Upward Buoyancy)
 F_buoyancy = (Area_pier * H_wave * 2) * rho_w * 9.81
-Weight_net = (Mass_total * 9.81) - F_buoyancy
+Weight_effective = (Mass_total * 9.81) - F_buoyancy  # Variable unified here
 
 # Stress Analysis (Von Mises)
 # Moment combines wind, wave, and seismic leverage
 Moment_base = (F_wind * H_piers) + (F_water * H_wave/2) + (F_seismic * H_piers/2)
-sigma_axial = (Weight_net / 2) / Area_pier
+sigma_axial = (Weight_effective / 2) / Area_pier
 sigma_bending = (Moment_base/2 * (D_piers/2)) / I_pier
 sigma_max = np.sqrt(sigma_axial**2 + sigma_bending**2)
 
