@@ -1,112 +1,111 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Total Bridge MMC Simulator", layout="wide")
-st.title("🏗️ Full Marine Bridge Mechanical Analysis")
+st.set_page_config(page_title="3D Marine Bridge MMC", layout="wide")
+st.title("🌉 3D Marine Bridge Structural Analysis")
 
-# --- 1. PARAMETERS (Interface mise à jour avec les nouveaux paramètres) ---
+# --- 1. PARAMETERS (Sidebar) ---
 st.sidebar.header("🌉 Bridge Geometry")
 L_deck = st.sidebar.slider("Deck Length (m)", 50, 500, 200)
 W_deck = st.sidebar.slider("Deck Width (m)", 10, 30, 15)
-T_deck = st.sidebar.slider("Deck Thickness (m)", 1.0, 5.0, 2.5) # NOUVEAU
+T_deck = st.sidebar.slider("Deck Thickness (m)", 1.0, 5.0, 2.5)
 H_piers = st.sidebar.slider("Piers Height (m)", 10, 60, 30)
 D_piers = st.sidebar.slider("Piers Diameter (m)", 2.0, 8.0, 4.0)
 
 st.sidebar.header("🌪️ Environmental Hazards")
 V_wind = st.sidebar.slider("Wind Velocity (m/s)", 0, 100, 40)
-H_wave = st.sidebar.slider("Wave Height / Water Depth (m)", 0.0, 20.0, 5.0) # MIS À JOUR
+H_wave = st.sidebar.slider("Water Depth (m)", 0.0, 20.0, 5.0)
 A_seismic = st.sidebar.slider("Seismic Accel (g)", 0.0, 1.5, 0.3)
 
-# --- 2. THE PHYSICS ENGINE (MMC) ---
-E = 30e9        # Module de Young du Béton (Pa)
-rho_c = 2500    # Masse volumique Béton (kg/m3)
-rho_w = 1025    # Masse volumique Eau salée (kg/m3)
-yield_limit = 25e6 # Limite élastique (25 MPa)
+# --- 2. PHYSICS ENGINE (MMC) ---
+E = 30e9        # Young's Modulus (Pa)
+rho_c = 2500    # Concrete Density
+rho_w = 1025    # Water Density
+yield_limit = 25e6 
 
-# Calculs Géométriques
 Area_pier = np.pi * (D_piers/2)**2
 I_pier = (np.pi * D_piers**4) / 64
 Vol_deck = L_deck * W_deck * T_deck 
 Vol_piers = Area_pier * H_piers * 2 
-
-# Masse & Poids Effectif (Bilan Vertical : Poids - Archimède)
 Mass_total = (Vol_deck + Vol_piers) * rho_c
-# Archimède : Poids de l'eau déplacée par la partie immergée des piles
-Vol_submerged = Area_pier * H_wave * 2 
-F_buoyancy = Vol_submerged * rho_w * 9.81
-Weight_effective = (Mass_total * 9.81) - F_buoyancy
 
-# Forces de Surface (Bilan Horizontal)
-# Vent : Frappe la face latérale du deck (L x T) et la partie émergée des piles
-F_wind_deck = 0.5 * 1.2 * (V_wind**2) * (L_deck * T_deck)
-F_wind_piers = 0.5 * 1.2 * (V_wind**2) * (D_piers * (H_piers - H_wave))
-F_wind = F_wind_deck + F_wind_piers
-
-# Eau : Traînée hydrodynamique sur les piles
+# Forces
+F_wind = 0.5 * 1.2 * (V_wind**2) * (L_deck * T_deck + D_piers * (H_piers - H_wave))
 F_water = 0.5 * rho_w * 1.5 * D_piers * (H_wave**2)
-
-# Séisme : Force d'inertie de Volume (F = m*a)
 F_seismic = Mass_total * (A_seismic * 9.81)
+Total_F_h = (F_wind + F_water + F_seismic) / 2 # Per pier
 
-# Analyse des Contraintes à la Base (Point Critique)
-# 1. Contrainte Normale (Compression axiale)
-sigma_axial = (Weight_effective / 2) / Area_pier
-
-# 2. Contrainte de Flexion (Moments cumulés)
-# Le vent sur le deck a un bras de levier de H_piers
-Total_Horizontal_F = (F_wind + F_water + F_seismic) / 2
-Moment_base = (F_wind_deck * H_piers) + (F_wind_piers * H_piers/2) + (F_water * H_wave/2) + (F_seismic/2 * H_piers/2)
+# Stress & Deflection
+Moment_base = Total_F_h * (H_piers * 0.75) # Estimated lever arm
+sigma_axial = (Mass_total * 9.81 / 2) / Area_pier
 sigma_bending = (Moment_base * (D_piers/2)) / I_pier
-
-# 3. Combinaison de Von Mises (Simplifiée pour flexion-compression)
 sigma_max = np.sqrt(sigma_axial**2 + sigma_bending**2)
-safety_ratio = sigma_max / yield_limit
 
-# --- 3. DASHBOARD DISPLAY ---
-col1, col2, col3 = st.columns(3)
-col1.metric("Effective Weight (Net)", f"{Weight_effective/1e6:.1f} MN")
-col2.metric("Total Wind Force", f"{F_wind/1e3:.1f} kN")
-col3.metric("Seismic Force", f"{F_seismic/1e6:.1f} MN")
+# Elastic Deflection (The curve)
+max_d = (Total_F_h * H_piers**3) / (3 * E * I_pier)
+z = np.linspace(0, H_piers, 20)
+deflection_curve = max_d * (z/H_piers)**2
 
-# --- 4. VISUALIZATION ---
-st.write("### 🌍 Force & Stress Distribution")
-fig, ax = plt.subplots(figsize=(12, 6))
+# --- 3. 3D VISUALIZATION (PLOTLY) ---
+st.write("### 🧊 Interactive 3D Structural Response")
+fig = go.Figure()
 
-# Dessin du niveau de l'eau
-ax.axhspan(0, H_wave, color='cyan', alpha=0.1, label="Submerged Zone")
+# --- DRAWING PIERS (Cylinders) ---
+def draw_pier(x_offset, color):
+    # Deformed pier coordinates
+    x_coords = x_offset + deflection_curve
+    y_coords = np.zeros_like(z)
+    
+    # Create a 3D tube for the pier
+    fig.add_trace(go.Scatter3d(
+        x=x_coords, y=y_coords, z=z,
+        mode='lines',
+        line=dict(color=color, width=D_piers*5),
+        name="Bridge Pier"
+    ))
 
-# Dessin de la structure originale (en pointillé)
-ax.plot([L_deck/4, L_deck/4], [0, H_piers], 'k--', alpha=0.3)
-ax.plot([3*L_deck/4, 3*L_deck/4], [0, H_piers], 'k--', alpha=0.3)
-ax.plot([0, L_deck], [H_piers, H_piers], 'k--', alpha=0.3)
+draw_pier(-L_deck/4, 'blue')
+draw_pier(L_deck/4, 'blue')
 
-# Calcul de la déformée (Réponse élastique)
-deflection = (Total_Horizontal_F * H_piers**3) / (3 * E * I_pier)
-d_x = deflection * 40 # Échelle d'exagération visuelle
+# --- DRAWING DECK (Box) ---
+# Deck corners at the top of deformed piers
+d_top = deflection_curve[-1]
+fig.add_trace(go.Mesh3d(
+    x=[d_top-L_deck/2, d_top+L_deck/2, d_top+L_deck/2, d_top-L_deck/2, d_top-L_deck/2, d_top+L_deck/2, d_top+L_deck/2, d_top-L_deck/2],
+    y=[-W_deck/2, -W_deck/2, W_deck/2, W_deck/2, -W_deck/2, -W_deck/2, W_deck/2, W_deck/2],
+    z=[H_piers, H_piers, H_piers, H_piers, H_piers+T_deck, H_piers+T_deck, H_piers+T_deck, H_piers+T_deck],
+    i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
+    j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
+    k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
+    color='brown', opacity=0.8, name="Deck"
+))
 
-# Dessin des Piles déformées
-z = np.linspace(0, H_piers, 50)
-x_p1 = (d_x) * (z/H_piers)**2 + L_deck/4
-x_p2 = (d_x) * (z/H_piers)**2 + 3*L_deck/4
-ax.plot(x_p1, z, color='blue', lw=D_piers, label="Piers (Stressed)")
-ax.plot(x_p2, z, color='blue', lw=D_piers)
+# --- DRAWING WATER SURFACE ---
+fig.add_trace(go.Mesh3d(
+    x=[-L_deck, L_deck, L_deck, -L_deck],
+    y=[-L_deck/2, -L_deck/2, L_deck/2, L_deck/2],
+    z=[H_wave, H_wave, H_wave, H_wave],
+    color='cyan', opacity=0.2, name="Water Level"
+))
 
-# Dessin du Tablier déformé (Épaisseur visuelle corrélée à T_deck)
-ax.plot([x_p1[-1] - L_deck/4, x_p2[-1] + L_deck/4], [H_piers, H_piers], color='darkred', lw=T_deck*2, label="Deck")
+# Scene Configuration
+fig.update_layout(
+    scene=dict(
+        aspectmode='data',
+        xaxis=dict(title="Lateral (m)", range=[-L_deck, L_deck]),
+        yaxis=dict(title="Width (m)", range=[-L_deck/2, L_deck/2]),
+        zaxis=dict(title="Height (m)", range=[0, H_piers + 10]),
+    ),
+    margin=dict(l=0, r=0, b=0, t=0),
+    height=700
+)
 
-# Flèches des forces
-ax.arrow(L_deck/2, H_piers + 5, V_wind/2, 0, head_width=2, color='orange', label="Wind")
-ax.arrow(-10, H_wave/2, 10, 0, head_width=2, color='teal', label="Waves")
+st.plotly_chart(fig, use_container_width=True)
 
-ax.set_ylim(-5, H_piers + 20)
-ax.legend(loc='upper right')
-ax.set_title("Bridge Response Simulation (MMC Analysis)")
-st.pyplot(fig)
-
-# Rapport d'intégrité
+# --- RESULTS ---
 if sigma_max > yield_limit:
-    st.error(f"❌ COLLAPSE: Max Stress {sigma_max/1e6:.2f} MPa exceeds Material Strength (25 MPa)!")
+    st.error(f"❌ COLLAPSE: Von Mises Stress ({sigma_max/1e6:.2f} MPa) exceeds 25 MPa!")
 else:
-    st.success(f"✅ STABLE: Max Stress {sigma_max/1e6:.2f} MPa is within Elastic limits.")
+    st.success(f"✅ STABLE: Von Mises Stress ({sigma_max/1e6:.2f} MPa) is safe.")
